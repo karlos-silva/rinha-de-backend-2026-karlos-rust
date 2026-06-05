@@ -31,7 +31,7 @@ fn main() {
     if let Ok(sock) = std::env::var("UNIX_SOCKET") {
         let _ = std::fs::remove_file(&sock);
         let listener = UnixListener::bind(&sock).expect("bind unix");
-        let _ = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o666));
+        let _ = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o777));
         eprintln!("[server] escutando unix:{sock}");
         for stream in listener.incoming() {
             if let Ok(s) = stream {
