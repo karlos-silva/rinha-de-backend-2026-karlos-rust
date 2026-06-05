@@ -16,6 +16,10 @@ path = "src/bin/build_index.rs"
 name = "validate"
 path = "src/bin/validate.rs"
 
+[[bin]]
+name = "diag"
+path = "src/bin/diag.rs"
+
 [lib]
 name = "rinha_fraud"
 path = "src/lib.rs"

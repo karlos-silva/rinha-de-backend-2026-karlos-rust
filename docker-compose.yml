@@ -22,7 +22,7 @@ services:
     image: ghcr.io/karlos-silva/rinha-fraud:latest
     environment:
       - PORT=8080
-      - NPROBE=24
+      - NPROBE=96
       - THREADS=3
     deploy:
       resources:
@@ -34,7 +34,7 @@ services:
     image: ghcr.io/karlos-silva/rinha-fraud:latest
     environment:
       - PORT=8080
-      - NPROBE=24
+      - NPROBE=96
       - THREADS=3
     deploy:
       resources:
