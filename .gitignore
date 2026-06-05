@@ -1,2 +1,4 @@
 /target
 *.bin
+sock
+docker-compose.test.yml

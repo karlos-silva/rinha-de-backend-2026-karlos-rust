@@ -1,12 +1,17 @@
 # Submissão da Rinha de Backend 2026.
 # Total: 1.0 CPU (0.15 + 0.425 + 0.425) e 350 MB (30 + 160 + 160).
-# Rede bridge (padrão do compose). LB nginx round-robin -> api1, api2.
+# nginx (LB round-robin) conversa com as APIs por unix socket num volume
+# compartilhado — sem TCP loopback. As APIs ficam sem rede (network_mode none).
+
+volumes:
+  sock:
 
 services:
   nginx:
     image: nginx:1.27-alpine
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - sock:/tmp/sock
     ports:
       - "9999:9999"
     depends_on:
@@ -21,9 +26,12 @@ services:
   api1:
     image: ghcr.io/karlos-silva/rinha-fraud:latest
     environment:
-      - PORT=8080
-      - NPROBE=96
+      - UNIX_SOCKET=/tmp/sock/api1.sock
+      - NPROBE=24
       - THREADS=3
+    volumes:
+      - sock:/tmp/sock
+    network_mode: "none"
     deploy:
       resources:
         limits:
@@ -33,9 +41,12 @@ services:
   api2:
     image: ghcr.io/karlos-silva/rinha-fraud:latest
     environment:
-      - PORT=8080
-      - NPROBE=96
+      - UNIX_SOCKET=/tmp/sock/api2.sock
+      - NPROBE=24
       - THREADS=3
+    volumes:
+      - sock:/tmp/sock
+    network_mode: "none"
     deploy:
       resources:
         limits:
