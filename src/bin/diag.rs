@@ -32,7 +32,7 @@ fn is_fraud(labels: &[u8], i: usize) -> bool {
 
 /// k-NN exato i16; retorna (approved, fraude_count).
 fn exact(q: &[i16; PAD], vectors: &[i16], labels: &[u8], n: usize) -> (bool, u32) {
-    let mut td = [i64::MAX; 5];
+    let mut td = [i32::MAX; 5];
     let mut tf = [false; 5];
     for i in 0..n {
         let d = dist_i16(q, &vectors[i * PAD..i * PAD + PAD]);

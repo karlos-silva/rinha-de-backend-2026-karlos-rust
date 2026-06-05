@@ -306,7 +306,7 @@ pub mod index {
             }
 
             // 2) busca exata i16 dentro dos clusters escolhidos -> top 5.
-            let mut top_d = [i64::MAX; 5];
+            let mut top_d = [i32::MAX; 5];
             let mut top_f = [false; 5];
             for &(_, c) in &best {
                 let c = c as usize;
@@ -335,14 +335,15 @@ pub mod index {
     }
 
     /// Distância euclidiana ao quadrado em i16 (escala 10000). Loop de tamanho
-    /// fixo PAD para o LLVM autovetorizar (SSE2/AVX2/NEON). Cada (d*d) cabe em
-    /// i32 (máx 4e8); a soma das 14 dims é acumulada em i64.
+    /// fixo PAD para o LLVM emitir AVX2 (vpmaddwd: multiplica pares de i16 e
+    /// acumula em i32). A soma máxima é 2.0e9 (12 dims [0,1] + 2 dims sentinela
+    /// [-1,1], escala 10000) < i32::MAX (2.147e9), então o i32 nunca estoura.
     #[inline]
-    pub fn dist_i16(a: &[i16; PAD], b: &[i16]) -> i64 {
-        let mut acc = 0i64;
+    pub fn dist_i16(a: &[i16; PAD], b: &[i16]) -> i32 {
+        let mut acc = 0i32;
         for i in 0..PAD {
             let d = a[i] as i32 - b[i] as i32;
-            acc += (d * d) as i64;
+            acc += d * d;
         }
         acc
     }
