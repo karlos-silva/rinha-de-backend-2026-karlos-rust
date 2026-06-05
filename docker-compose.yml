@@ -1,21 +1,76 @@
-# Submissão Rinha 2026. Total: 1.0 CPU (0.15+0.425+0.425), 350MB (30+160+160).
-# TCP, sem cpuset (scheduler livre equilibra melhor que pinning errado).
+# Submissão Rinha 2026. Total: 1.0 CPU (0.45+0.45+0.10), 350MB (169+169+12).
+# LB próprio (proxy TCP->unix, round-robin) no lugar do nginx. APIs em unix
+# socket num tmpfs compartilhado. cpuset pina cada serviço a cores dedicados.
+
+volumes:
+  sockets:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=8m,uid=0,gid=0,mode=0777"
+
 services:
-  nginx:
-    image: nginx:1.27-alpine
-    volumes: [./nginx.conf:/etc/nginx/nginx.conf:ro]
-    ports: ["9999:9999"]
-    depends_on: [api1, api2]
-    deploy: {resources: {limits: {cpus: "0.15", memory: "30MB"}}}
   api1:
     image: ghcr.io/karlos-silva/rinha-fraud:latest
     hostname: api1
-    environment: [PORT=8080, NPROBE=24]
-    ulimits: {nofile: {soft: 65535, hard: 65535}}
-    deploy: {resources: {limits: {cpus: "0.425", memory: "160M"}}}
+    cpuset: "0"
+    environment:
+      - UNIX_SOCKET=/sockets/api1.sock
+      - NPROBE=24
+    volumes:
+      - sockets:/sockets
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      memlock: -1
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "169M"
+
   api2:
     image: ghcr.io/karlos-silva/rinha-fraud:latest
     hostname: api2
-    environment: [PORT=8080, NPROBE=24]
-    ulimits: {nofile: {soft: 65535, hard: 65535}}
-    deploy: {resources: {limits: {cpus: "0.425", memory: "160M"}}}
+    cpuset: "1"
+    environment:
+      - UNIX_SOCKET=/sockets/api2.sock
+      - NPROBE=24
+    volumes:
+      - sockets:/sockets
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+      memlock: -1
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "169M"
+
+  lb:
+    image: ghcr.io/karlos-silva/rinha-fraud:latest
+    command: ["/app/lb"]
+    cpuset: "2,3"
+    environment:
+      - PORT=9999
+      - SOCKETS=/sockets/api1.sock,/sockets/api2.sock
+    volumes:
+      - sockets:/sockets
+    ports:
+      - "9999:9999"
+    depends_on:
+      - api1
+      - api2
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: "12M"
