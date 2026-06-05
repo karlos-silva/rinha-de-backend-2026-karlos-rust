@@ -10,12 +10,13 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 # x86-64-v3 == nível Haswell (AVX2 + FMA), habilita autovetorização.
 ENV RUSTFLAGS="-C target-cpu=x86-64-v3"
-RUN cargo build --release --bin server
+RUN cargo build --release --bin server --bin lb
 
 FROM --platform=linux/amd64 debian:bookworm-slim
 WORKDIR /app
 COPY --from=builder /app/target/release/server /app/server
+COPY --from=builder /app/target/release/lb /app/lb
 COPY index.bin /app/index.bin
 ENV INDEX_PATH=/app/index.bin
-# PORT/NPROBE/THREADS vêm do docker-compose.
+# A mesma imagem serve a API (CMD padrão) e o LB (command: /app/lb no compose).
 CMD ["/app/server"]

@@ -9,6 +9,10 @@ name = "server"
 path = "src/main.rs"
 
 [[bin]]
+name = "lb"
+path = "src/bin/lb.rs"
+
+[[bin]]
 name = "build_index"
 path = "src/bin/build_index.rs"
 
