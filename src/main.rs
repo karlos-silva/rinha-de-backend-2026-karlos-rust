@@ -1,13 +1,16 @@
 //! Servidor de detecção de fraude. mmap do índice + busca IVF.
-//! HTTP/1.1 mínimo, feito à mão, com TCP_NODELAY (evita atraso de Nagle nas
-//! respostas pequenas) e uma thread por conexão keep-alive (sem fila/mutex).
+//! HTTP/1.1 mínimo, feito à mão, uma thread por conexão keep-alive.
+//! Escuta em unix socket (UNIX_SOCKET) — nginx no mesmo host, sem TCP loopback —
+//! ou em TCP (PORT) com TCP_NODELAY para teste local.
 //! Endpoints: GET /ready, POST /fraud-score.
 
 use memmap2::Mmap;
 use rinha_fraud::index::Index;
 use rinha_fraud::vectorize::{quantize, vectorize, Request};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::UnixListener;
 
 fn env_usize(key: &str, default: usize) -> usize {
     std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
@@ -16,42 +19,52 @@ fn env_usize(key: &str, default: usize) -> usize {
 fn main() {
     let index_path = std::env::var("INDEX_PATH").unwrap_or_else(|_| "index.bin".into());
     let nprobe = env_usize("NPROBE", 24);
-    let port = env_usize("PORT", 9999);
 
-    // mmap do índice; vaza para 'static (vive por todo o processo, read-only).
+    // mmap do índice; vaza para 'static (read-only por todo o processo).
     let file = std::fs::File::open(&index_path)
         .unwrap_or_else(|e| panic!("abrir índice {index_path}: {e}"));
     let mmap = unsafe { Mmap::map(&file).expect("mmap índice") };
     let bytes: &'static [u8] = Box::leak(Box::new(mmap));
     let index: &'static Index<'static> = Box::leak(Box::new(Index::from_bytes(bytes)));
+    eprintln!("[server] {} vetores, {} clusters, nprobe={nprobe}", index.num_vectors, index.num_clusters);
 
-    let addr = format!("0.0.0.0:{port}");
-    let listener = TcpListener::bind(&addr).expect("bind");
-    eprintln!(
-        "[server] {} vetores, {} clusters, nprobe={nprobe}, escutando tcp:{addr}",
-        index.num_vectors, index.num_clusters
-    );
-
-    // Uma thread por conexão. O nginx mantém um pool keep-alive limitado, então
-    // o número de threads fica baixo. Sem fila compartilhada -> sem contenção.
-    for stream in listener.incoming() {
-        if let Ok(stream) = stream {
-            let _ = stream.set_nodelay(true); // crítico: desliga o Nagle
-            std::thread::spawn(move || handle_conn(stream, index, nprobe));
+    if let Ok(sock) = std::env::var("UNIX_SOCKET") {
+        let _ = std::fs::remove_file(&sock);
+        let listener = UnixListener::bind(&sock).expect("bind unix");
+        let _ = std::fs::set_permissions(&sock, std::fs::Permissions::from_mode(0o666));
+        eprintln!("[server] escutando unix:{sock}");
+        for stream in listener.incoming() {
+            if let Ok(s) = stream {
+                if let Ok(w) = s.try_clone() {
+                    std::thread::spawn(move || handle_conn(s, w, index, nprobe));
+                }
+            }
+        }
+    } else {
+        let addr = format!("0.0.0.0:{}", env_usize("PORT", 9999));
+        let listener = TcpListener::bind(&addr).expect("bind tcp");
+        eprintln!("[server] escutando tcp:{addr}");
+        for stream in listener.incoming() {
+            if let Ok(s) = stream {
+                let _ = s.set_nodelay(true);
+                if let Ok(w) = s.try_clone() {
+                    std::thread::spawn(move || handle_conn(s, w, index, nprobe));
+                }
+            }
         }
     }
 }
 
-fn handle_conn(stream: TcpStream, index: &'static Index<'static>, nprobe: usize) {
-    let write_stream = match stream.try_clone() {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    let mut reader = BufReader::with_capacity(8192, stream);
-    let mut writer = write_stream;
+fn handle_conn<R: Read, W: Write>(
+    read_stream: R,
+    mut writer: W,
+    index: &'static Index<'static>,
+    nprobe: usize,
+) {
+    let mut reader = BufReader::with_capacity(8192, read_stream);
     let mut line = String::with_capacity(256);
     let mut body = Vec::with_capacity(1024);
-    let mut out = Vec::with_capacity(256);
+    let mut out = Vec::with_capacity(64);
 
     loop {
         // ---- linha de requisição (ex.: "POST /fraud-score HTTP/1.1") ----
@@ -81,7 +94,7 @@ fn handle_conn(stream: TcpStream, index: &'static Index<'static>, nprobe: usize)
             }
         }
 
-        // ---- corpo (apenas POST) ----
+        // ---- corpo (apenas POST) + resposta ----
         let resp_body: &str = if is_post {
             body.clear();
             body.resize(content_len, 0);
@@ -91,7 +104,6 @@ fn handle_conn(stream: TcpStream, index: &'static Index<'static>, nprobe: usize)
             match score(&body, index, nprobe) {
                 Some((approved, fs)) => {
                     fmt_into(&mut out, approved, fs);
-                    // SAFETY: fmt_into só escreve ASCII.
                     unsafe { std::str::from_utf8_unchecked(&out) }
                 }
                 None => "{\"approved\":true,\"fraud_score\":0.0}",
@@ -100,7 +112,6 @@ fn handle_conn(stream: TcpStream, index: &'static Index<'static>, nprobe: usize)
             "ok" // GET /ready
         };
 
-        // ---- resposta ----
         if write_response(&mut writer, resp_body).is_err() {
             return;
         }
@@ -108,9 +119,8 @@ fn handle_conn(stream: TcpStream, index: &'static Index<'static>, nprobe: usize)
 }
 
 #[inline]
-fn write_response(w: &mut TcpStream, body: &str) -> std::io::Result<()> {
-    // Uma única escrita (com NODELAY, sai no fio imediatamente).
-    let mut buf = Vec::with_capacity(128 + body.len());
+fn write_response<W: Write>(w: &mut W, body: &str) -> std::io::Result<()> {
+    let mut buf = Vec::with_capacity(96 + body.len());
     buf.extend_from_slice(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ");
     let mut n = [0u8; 20];
     buf.extend_from_slice(itoa(body.len(), &mut n));
@@ -143,14 +153,13 @@ fn score(body: &[u8], index: &Index, nprobe: usize) -> Option<(bool, f32)> {
     Some((fs < 0.6, fs))
 }
 
-/// Escreve `{"approved":<bool>,"fraud_score":<x.x>}` em `out` (múltiplo de 0.2).
+/// Escreve `{"approved":<bool>,"fraud_score":<x.x>}` em `out` (fraud_score = k/5).
 #[inline]
 fn fmt_into(out: &mut Vec<u8>, approved: bool, fraud_score: f32) {
     out.clear();
     out.extend_from_slice(b"{\"approved\":");
     out.extend_from_slice(if approved { b"true" } else { b"false" });
     out.extend_from_slice(b",\"fraud_score\":");
-    // fraud_score sempre é k/5 -> uma casa decimal.
     let tenths = (fraud_score * 10.0).round() as i32; // 0,2,4,6,8,10
     out.push(b'0' + (tenths / 10) as u8);
     out.push(b'.');
