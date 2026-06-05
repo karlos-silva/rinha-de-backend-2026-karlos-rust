@@ -1,25 +1,21 @@
-# Submissão Rinha 2026. Total: 1.0 CPU (0.45+0.45+0.10), 350MB (169+169+12).
-# TCP + cpuset pinning (cada serviço em cores dedicados, sem contenção/jitter).
+# Submissão Rinha 2026. Total: 1.0 CPU (0.15+0.425+0.425), 350MB (30+160+160).
+# TCP, sem cpuset (scheduler livre equilibra melhor que pinning errado).
 services:
-  api1:
-    image: ghcr.io/karlos-silva/rinha-fraud:latest
-    hostname: api1
-    cpuset: "0"
-    environment: [PORT=8080, NPROBE=24]
-    ulimits: {nofile: {soft: 65535, hard: 65535}, memlock: -1}
-    deploy: {resources: {limits: {cpus: "0.45", memory: "169M"}}}
-  api2:
-    image: ghcr.io/karlos-silva/rinha-fraud:latest
-    hostname: api2
-    cpuset: "1"
-    environment: [PORT=8080, NPROBE=24]
-    ulimits: {nofile: {soft: 65535, hard: 65535}, memlock: -1}
-    deploy: {resources: {limits: {cpus: "0.45", memory: "169M"}}}
   nginx:
     image: nginx:1.27-alpine
-    cpuset: "2,3"
     volumes: [./nginx.conf:/etc/nginx/nginx.conf:ro]
     ports: ["9999:9999"]
     depends_on: [api1, api2]
+    deploy: {resources: {limits: {cpus: "0.15", memory: "30MB"}}}
+  api1:
+    image: ghcr.io/karlos-silva/rinha-fraud:latest
+    hostname: api1
+    environment: [PORT=8080, NPROBE=24]
     ulimits: {nofile: {soft: 65535, hard: 65535}}
-    deploy: {resources: {limits: {cpus: "0.10", memory: "12M"}}}
+    deploy: {resources: {limits: {cpus: "0.425", memory: "160M"}}}
+  api2:
+    image: ghcr.io/karlos-silva/rinha-fraud:latest
+    hostname: api2
+    environment: [PORT=8080, NPROBE=24]
+    ulimits: {nofile: {soft: 65535, hard: 65535}}
+    deploy: {resources: {limits: {cpus: "0.425", memory: "160M"}}}
