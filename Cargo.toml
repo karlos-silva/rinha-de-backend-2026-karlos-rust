@@ -26,7 +26,6 @@ path = "src/lib.rs"
 
 [dependencies]
 memmap2 = "0.9"
-tiny_http = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 flate2 = "1"
