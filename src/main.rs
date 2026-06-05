@@ -36,7 +36,7 @@ fn main() {
         for stream in listener.incoming() {
             if let Ok(s) = stream {
                 if let Ok(w) = s.try_clone() {
-                    std::thread::spawn(move || handle_conn(s, w, index, nprobe));
+                    spawn_conn(move || handle_conn(s, w, index, nprobe));
                 }
             }
         }
@@ -48,11 +48,17 @@ fn main() {
             if let Ok(s) = stream {
                 let _ = s.set_nodelay(true);
                 if let Ok(w) = s.try_clone() {
-                    std::thread::spawn(move || handle_conn(s, w, index, nprobe));
+                    spawn_conn(move || handle_conn(s, w, index, nprobe));
                 }
             }
         }
     }
+}
+
+/// Thread por conexão com stack pequeno (512 KB) — limita memória sob muitas
+/// conexões concorrentes mantendo folga para serde + a busca.
+fn spawn_conn<F: FnOnce() + Send + 'static>(f: F) {
+    let _ = std::thread::Builder::new().stack_size(512 * 1024).spawn(f);
 }
 
 fn handle_conn<R: Read, W: Write>(

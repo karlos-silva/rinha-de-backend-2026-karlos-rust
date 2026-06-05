@@ -30,7 +30,10 @@ fn main() {
         let _ = client.set_nodelay(true);
         let idx = rr.fetch_add(1, Ordering::Relaxed) % sockets.len();
         let sock = sockets[idx].clone();
-        std::thread::spawn(move || proxy(client, &sock));
+        // Stack pequeno: proxy só copia bytes; evita estourar memória com muitas conexões.
+        let _ = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || proxy(client, &sock));
     }
 }
 
@@ -52,10 +55,13 @@ fn proxy(client: TcpStream, sock: &str) {
     let (mut b_read, mut b_write) = (backend.try_clone().unwrap(), backend);
 
     // client -> backend
-    let up = std::thread::spawn(move || {
-        let _ = copy(&mut c_read, &mut b_write);
-        let _ = b_write.shutdown(std::net::Shutdown::Write);
-    });
+    let up = std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(move || {
+            let _ = copy(&mut c_read, &mut b_write);
+            let _ = b_write.shutdown(std::net::Shutdown::Write);
+        })
+        .unwrap();
     // backend -> client
     let _ = copy(&mut b_read, &mut c_write);
     let _ = c_write.shutdown(std::net::Shutdown::Write);
